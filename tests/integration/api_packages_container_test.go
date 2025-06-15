@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -310,7 +311,7 @@ func TestPackageContainer(t *testing.T) {
 				resp = MakeRequest(t, req, http.StatusNoContent)
 
 				assert.Equal(t, uuid, resp.Header().Get("Docker-Upload-Uuid"))
-				assert.Equal(t, fmt.Sprintf("0-%d", len(blobContent)), resp.Header().Get("Range"))
+				assert.Equal(t, contentRange, resp.Header().Get("Range"))
 
 				pbu, err = packages_model.GetBlobUploadByID(db.DefaultContext, uuid)
 				assert.NoError(t, err)
@@ -341,7 +342,8 @@ func TestPackageContainer(t *testing.T) {
 					resp = MakeRequest(t, req, http.StatusNoContent)
 
 					assert.Equal(t, uuid, resp.Header().Get("Docker-Upload-Uuid"))
-					assert.Equal(t, "0-0", resp.Header().Get("Range"))
+					// FIXME: undefined behavior when the uploaded content is empty: https://github.com/opencontainers/distribution-spec/issues/578
+					assert.Nil(t, resp.Header().Values("Range"))
 
 					req = NewRequest(t, "DELETE", setting.AppURL+uploadURL[1:]).
 						AddTokenAuth(userToken)
@@ -621,6 +623,22 @@ func TestPackageContainer(t *testing.T) {
 				assert.Equal(t, strconv.Itoa(len(blobContent)), resp.Header().Get("Content-Length"))
 				assert.Equal(t, blobDigest, resp.Header().Get("Docker-Content-Digest"))
 				assert.Equal(t, blobContent, resp.Body.Bytes())
+			})
+
+			t.Run("GetBlob/Empty", func(t *testing.T) {
+				defer tests.PrintCurrentTest(t)()
+				emptyDigestBuf := sha256.Sum256(nil)
+				emptyDigest := "sha256:" + hex.EncodeToString(emptyDigestBuf[:])
+				req := NewRequestWithBody(t, "POST", fmt.Sprintf("%s/blobs/uploads?digest=%s", url, emptyDigest), strings.NewReader("")).AddTokenAuth(userToken)
+				MakeRequest(t, req, http.StatusCreated)
+
+				req = NewRequest(t, "HEAD", fmt.Sprintf("%s/blobs/%s", url, emptyDigest)).AddTokenAuth(userToken)
+				resp := MakeRequest(t, req, http.StatusOK)
+				assert.Equal(t, "0", resp.Header().Get("Content-Length"))
+
+				req = NewRequest(t, "GET", fmt.Sprintf("%s/blobs/%s", url, emptyDigest)).AddTokenAuth(userToken)
+				resp = MakeRequest(t, req, http.StatusOK)
+				assert.Equal(t, "0", resp.Header().Get("Content-Length"))
 			})
 
 			t.Run("GetTagList", func(t *testing.T) {
