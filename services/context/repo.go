@@ -94,24 +94,22 @@ func RepoMustNotBeArchived() func(ctx *Context) {
 	}
 }
 
-// CanCommitToBranchResults represents the results of CanCommitToBranch
-type CanCommitToBranchResults struct {
-	CanCommitToBranch bool
-	EditorEnabled     bool
-	UserCanPush       bool
-	RequireSigned     bool
-	WillSign          bool
-	SigningKey        string
-	WontSignReason    string
+type CommitFormBehaviors struct {
+	CanCommitToBranch        bool
+	EditorEnabled            bool
+	UserCanPush              bool
+	RequireSigned            bool
+	WillSign                 bool
+	SigningKey               *git.SigningKey
+	WontSignReason           string
+	CanCreatePullRequest     bool
+	CanCreateBasePullRequest bool
 }
 
-// CanCommitToBranch returns true if repository is editable and user has proper access level
-//
-// and branch is not protected for push
-func (r *Repository) CanCommitToBranch(ctx context.Context, doer *user_model.User) (CanCommitToBranchResults, error) {
+func (r *Repository) PrepareCommitFormBehaviors(ctx *Context, doer *user_model.User) (*CommitFormBehaviors, error) {
 	protectedBranch, err := git_model.GetFirstMatchProtectedBranchRule(ctx, r.Repository.ID, r.BranchName)
 	if err != nil {
-		return CanCommitToBranchResults{}, err
+		return nil, err
 	}
 	userCanPush := true
 	requireSigned := false
@@ -123,7 +121,8 @@ func (r *Repository) CanCommitToBranch(ctx context.Context, doer *user_model.Use
 
 	sign, keyID, _, err := asymkey_service.SignCRUDAction(ctx, r.Repository.RepoPath(), doer, r.Repository.RepoPath(), git.BranchPrefix+r.BranchName)
 
-	canCommit := r.CanEnableEditor(ctx, doer) && userCanPush
+	canEnableEditor := r.CanEnableEditor(ctx, doer)
+	canCommit := canEnableEditor && userCanPush
 	if requireSigned {
 		canCommit = canCommit && sign
 	}
@@ -137,14 +136,20 @@ func (r *Repository) CanCommitToBranch(ctx context.Context, doer *user_model.Use
 		}
 	}
 
-	return CanCommitToBranchResults{
+	canCreateBasePullRequest := ctx.Repo.Repository.BaseRepo != nil && ctx.Repo.Repository.BaseRepo.UnitEnabled(ctx, unit_model.TypePullRequests)
+	canCreatePullRequest := ctx.Repo.Repository.UnitEnabled(ctx, unit_model.TypePullRequests) || canCreateBasePullRequest
+
+	return &CommitFormBehaviors{
 		CanCommitToBranch: canCommit,
-		EditorEnabled:     r.CanEnableEditor(ctx, doer),
+		EditorEnabled:     canEnableEditor,
 		UserCanPush:       userCanPush,
 		RequireSigned:     requireSigned,
 		WillSign:          sign,
 		SigningKey:        keyID,
 		WontSignReason:    wontSignReason,
+
+		CanCreatePullRequest:     canCreatePullRequest,
+		CanCreateBasePullRequest: canCreateBasePullRequest,
 	}, err
 }
 
