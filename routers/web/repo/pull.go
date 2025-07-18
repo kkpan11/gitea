@@ -27,6 +27,7 @@ import (
 	"code.gitea.io/gitea/modules/fileicon"
 	"code.gitea.io/gitea/modules/git"
 	"code.gitea.io/gitea/modules/gitrepo"
+	"code.gitea.io/gitea/modules/graceful"
 	issue_template "code.gitea.io/gitea/modules/issue/template"
 	"code.gitea.io/gitea/modules/log"
 	"code.gitea.io/gitea/modules/setting"
@@ -195,7 +196,7 @@ func GetPullDiffStats(ctx *context.Context) {
 	}
 
 	// do not report 500 server error to end users if error occurs, otherwise a PR missing ref won't be able to view.
-	headCommitID, err := ctx.Repo.GitRepo.GetRefCommitID(pull.GetGitRefName())
+	headCommitID, err := ctx.Repo.GitRepo.GetRefCommitID(pull.GetGitHeadRefName())
 	if err != nil {
 		log.Error("Failed to GetRefCommitID: %v, repo: %v", err, ctx.Repo.Repository.FullName())
 		return
@@ -217,13 +218,13 @@ func GetMergedBaseCommitID(ctx *context.Context, issue *issues_model.Issue) stri
 	if pull.MergeBase == "" {
 		var commitSHA, parentCommit string
 		// If there is a head or a patch file, and it is readable, grab info
-		commitSHA, err := ctx.Repo.GitRepo.GetRefCommitID(pull.GetGitRefName())
+		commitSHA, err := ctx.Repo.GitRepo.GetRefCommitID(pull.GetGitHeadRefName())
 		if err != nil {
 			// Head File does not exist, try the patch
 			commitSHA, err = ctx.Repo.GitRepo.ReadPatchCommit(pull.Index)
 			if err == nil {
 				// Recreate pull head in files for next time
-				if err := ctx.Repo.GitRepo.SetReference(pull.GetGitRefName(), commitSHA); err != nil {
+				if err := ctx.Repo.GitRepo.SetReference(pull.GetGitHeadRefName(), commitSHA); err != nil {
 					log.Error("Could not write head file", err)
 				}
 			} else {
@@ -273,7 +274,7 @@ func prepareMergedViewPullInfo(ctx *context.Context, issue *issues_model.Issue) 
 	baseCommit := GetMergedBaseCommitID(ctx, issue)
 
 	compareInfo, err := ctx.Repo.GitRepo.GetCompareInfo(ctx.Repo.Repository.RepoPath(),
-		baseCommit, pull.GetGitRefName(), false, false)
+		baseCommit, pull.GetGitHeadRefName(), false, false)
 	if err != nil {
 		if strings.Contains(err.Error(), "fatal: Not a valid object name") || strings.Contains(err.Error(), "unknown revision or path not in the working tree") {
 			ctx.Data["IsPullRequestBroken"] = true
@@ -353,9 +354,9 @@ func prepareViewPullInfo(ctx *context.Context, issue *issues_model.Issue) *git.C
 		ctx.Data["BaseTarget"] = pull.BaseBranch
 		ctx.Data["HeadTarget"] = pull.HeadBranch
 
-		sha, err := baseGitRepo.GetRefCommitID(pull.GetGitRefName())
+		sha, err := baseGitRepo.GetRefCommitID(pull.GetGitHeadRefName())
 		if err != nil {
-			ctx.ServerError(fmt.Sprintf("GetRefCommitID(%s)", pull.GetGitRefName()), err)
+			ctx.ServerError(fmt.Sprintf("GetRefCommitID(%s)", pull.GetGitHeadRefName()), err)
 			return nil
 		}
 		commitStatuses, err := git_model.GetLatestCommitStatus(ctx, repo.ID, sha, db.ListOptionsAll)
@@ -373,7 +374,7 @@ func prepareViewPullInfo(ctx *context.Context, issue *issues_model.Issue) *git.C
 		}
 
 		compareInfo, err := baseGitRepo.GetCompareInfo(pull.BaseRepo.RepoPath(),
-			pull.MergeBase, pull.GetGitRefName(), false, false)
+			pull.MergeBase, pull.GetGitHeadRefName(), false, false)
 		if err != nil {
 			if strings.Contains(err.Error(), "fatal: Not a valid object name") {
 				ctx.Data["IsPullRequestBroken"] = true
@@ -406,12 +407,12 @@ func prepareViewPullInfo(ctx *context.Context, issue *issues_model.Issue) *git.C
 		if pull.Flow == issues_model.PullRequestFlowGithub {
 			headBranchExist = gitrepo.IsBranchExist(ctx, pull.HeadRepo, pull.HeadBranch)
 		} else {
-			headBranchExist = gitrepo.IsReferenceExist(ctx, pull.BaseRepo, pull.GetGitRefName())
+			headBranchExist = gitrepo.IsReferenceExist(ctx, pull.BaseRepo, pull.GetGitHeadRefName())
 		}
 
 		if headBranchExist {
 			if pull.Flow != issues_model.PullRequestFlowGithub {
-				headBranchSha, err = baseGitRepo.GetRefCommitID(pull.GetGitRefName())
+				headBranchSha, err = baseGitRepo.GetRefCommitID(pull.GetGitHeadRefName())
 			} else {
 				headBranchSha, err = headGitRepo.GetBranchCommitID(pull.HeadBranch)
 			}
@@ -434,7 +435,7 @@ func prepareViewPullInfo(ctx *context.Context, issue *issues_model.Issue) *git.C
 		ctx.Data["GetCommitMessages"] = ""
 	}
 
-	sha, err := baseGitRepo.GetRefCommitID(pull.GetGitRefName())
+	sha, err := baseGitRepo.GetRefCommitID(pull.GetGitHeadRefName())
 	if err != nil {
 		if git.IsErrNotExist(err) {
 			ctx.Data["IsPullRequestBroken"] = true
@@ -450,7 +451,7 @@ func prepareViewPullInfo(ctx *context.Context, issue *issues_model.Issue) *git.C
 			ctx.Data["NumFiles"] = 0
 			return nil
 		}
-		ctx.ServerError(fmt.Sprintf("GetRefCommitID(%s)", pull.GetGitRefName()), err)
+		ctx.ServerError(fmt.Sprintf("GetRefCommitID(%s)", pull.GetGitHeadRefName()), err)
 		return nil
 	}
 
@@ -521,7 +522,7 @@ func prepareViewPullInfo(ctx *context.Context, issue *issues_model.Issue) *git.C
 	}
 
 	compareInfo, err := baseGitRepo.GetCompareInfo(pull.BaseRepo.RepoPath(),
-		git.BranchPrefix+pull.BaseBranch, pull.GetGitRefName(), false, false)
+		git.BranchPrefix+pull.BaseBranch, pull.GetGitHeadRefName(), false, false)
 	if err != nil {
 		if strings.Contains(err.Error(), "fatal: Not a valid object name") {
 			ctx.Data["IsPullRequestBroken"] = true
@@ -697,7 +698,7 @@ func viewPullFiles(ctx *context.Context, specifiedStartCommit, specifiedEndCommi
 		return
 	}
 
-	headCommitID, err := gitRepo.GetRefCommitID(pull.GetGitRefName())
+	headCommitID, err := gitRepo.GetRefCommitID(pull.GetGitHeadRefName())
 	if err != nil {
 		ctx.ServerError("GetRefCommitID", err)
 		return
@@ -749,7 +750,7 @@ func viewPullFiles(ctx *context.Context, specifiedStartCommit, specifiedEndCommi
 		diffOptions.BeforeCommitID = startCommitID
 	}
 
-	diff, err := gitdiff.GetDiffForRender(ctx, gitRepo, diffOptions, files...)
+	diff, err := gitdiff.GetDiffForRender(ctx, ctx.Repo.RepoLink, gitRepo, diffOptions, files...)
 	if err != nil {
 		ctx.ServerError("GetDiff", err)
 		return
@@ -986,7 +987,9 @@ func UpdatePullRequest(ctx *context.Context) {
 	// default merge commit message
 	message := fmt.Sprintf("Merge branch '%s' into %s", issue.PullRequest.BaseBranch, issue.PullRequest.HeadBranch)
 
-	if err = pull_service.Update(ctx, issue.PullRequest, ctx.Doer, message, rebase); err != nil {
+	// The update process should not be cancelled by the user
+	// so we set the context to be a background context
+	if err = pull_service.Update(graceful.GetManager().ShutdownContext(), issue.PullRequest, ctx.Doer, message, rebase); err != nil {
 		if pull_service.IsErrMergeConflicts(err) {
 			conflictError := err.(pull_service.ErrMergeConflicts)
 			flashError, err := ctx.RenderToHTML(tplAlertDetails, map[string]any{
@@ -1255,13 +1258,8 @@ func CancelAutoMergePullRequest(ctx *context.Context) {
 }
 
 func stopTimerIfAvailable(ctx *context.Context, user *user_model.User, issue *issues_model.Issue) error {
-	if issues_model.StopwatchExists(ctx, user.ID, issue.ID) {
-		if err := issues_model.CreateOrStopIssueStopwatch(ctx, user, issue); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	_, err := issues_model.FinishIssueStopwatch(ctx, user, issue)
+	return err
 }
 
 func PullsNewRedirect(ctx *context.Context) {
@@ -1511,7 +1509,7 @@ func CleanUpPullRequest(ctx *context.Context) {
 	}()
 
 	// Check if branch has no new commits
-	headCommitID, err := gitBaseRepo.GetRefCommitID(pr.GetGitRefName())
+	headCommitID, err := gitBaseRepo.GetRefCommitID(pr.GetGitHeadRefName())
 	if err != nil {
 		log.Error("GetRefCommitID: %v", err)
 		ctx.Flash.Error(ctx.Tr("repo.branch.deletion_failed", fullBranchName))

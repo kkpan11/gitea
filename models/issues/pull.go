@@ -413,8 +413,8 @@ func (pr *PullRequest) getReviewedByLines(ctx context.Context, writer io.Writer)
 	return committer.Commit()
 }
 
-// GetGitRefName returns git ref for hidden pull request branch
-func (pr *PullRequest) GetGitRefName() string {
+// GetGitHeadRefName returns git ref for hidden pull request branch
+func (pr *PullRequest) GetGitHeadRefName() string {
 	return fmt.Sprintf("%s%d/head", git.PullPrefix, pr.Index)
 }
 
@@ -647,12 +647,6 @@ func GetAllUnmergedAgitPullRequestByPoster(ctx context.Context, uid int64) ([]*P
 		Find(&pulls)
 
 	return pulls, err
-}
-
-// Update updates all fields of pull request.
-func (pr *PullRequest) Update(ctx context.Context) error {
-	_, err := db.GetEngine(ctx).ID(pr.ID).AllCols().Update(pr)
-	return err
 }
 
 // UpdateCols updates specific fields of pull request.
